@@ -1,0 +1,338 @@
+// ============================================================================
+// MAMA ISRAEL COLLECTIONS — Prisma schema (PostgreSQL)
+// Single source of truth for the production database.
+// Apply changes with migrations ONLY (never `db push` in production):
+//   bun run db:migrate      (local dev)
+//   bun run db:deploy       (production / Render release command)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------- Enums -------------------------------------
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  ready
+  shipped
+  delivered
+  cancelled
+}
+
+enum PaymentStatus {
+  unpaid
+  pending
+  paid
+  failed
+  cancelled
+  refunded
+}
+
+enum PaymentMethod {
+  pay_on_delivery
+  mpesa
+  card
+}
+
+enum PaymentProvider {
+  mpesa
+  card
+  cash
+}
+
+enum PaymentTransactionStatus {
+  pending
+  success
+  failed
+  cancelled
+}
+
+// ------------------------------ Auth ---------------------------------------
+
+model AdminUser {
+  id                  String    @id @default(cuid())
+  email               String    @unique @db.VarChar(120)
+  name                String    @db.VarChar(80)
+  passwordHash        String
+  role                String    @default("admin") @db.VarChar(20)
+  /// True until the owner changes the bootstrap password from .env
+  mustChangePassword  Boolean   @default(false)
+  passwordChangedAt   DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ------------------------------ Catalogue ----------------------------------
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @db.VarChar(60)
+  slug        String   @unique @db.VarChar(80)
+  description String   @default("") @db.VarChar(500)
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  products    Product[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Product {
+  id                String           @id @default(cuid())
+  name              String           @db.VarChar(120)
+  slug              String           @unique @db.VarChar(140)
+  description       String           @db.Text
+  category          Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  categoryId        String
+  price             Decimal          @db.Decimal(10, 2)
+  compareAtPrice    Decimal?         @db.Decimal(10, 2)
+  sku               String           @unique @db.VarChar(40)
+  sizes             String[]         @default([])
+  colors            Json             @default("[]")
+  stockQuantity     Int              @default(0)
+  lowStockThreshold Int              @default(3)
+  isFeatured        Boolean          @default(false)
+  isNewArrival      Boolean          @default(true)
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  images            ProductImage[]
+  variants          ProductVariant[]
+  orderItems        OrderItem[]
+
+  @@index([isActive, isFeatured, createdAt])
+  @@index([categoryId, isActive])
+  @@index([isNewArrival, createdAt])
+  @@index([price])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  url       String  @db.VarChar(500)
+  /// Cloudinary public id — used for cleanup when images are replaced.
+  publicId  String? @db.VarChar(200)
+  alt       String  @default("") @db.VarChar(200)
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  @@index([productId, sortOrder])
+}
+
+/// Optional per size/colour stock tracking. When a product has variants,
+/// variant stock is authoritative and Product.stockQuantity is the aggregate.
+model ProductVariant {
+  id        String  @id @default(cuid())
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  size      String? @db.VarChar(20)
+  color     String? @db.VarChar(40)
+  sku       String? @db.VarChar(40)
+  stock     Int     @default(0)
+
+  @@unique([productId, size, color])
+  @@index([productId])
+}
+
+// ------------------------------ Customers ----------------------------------
+
+model Customer {
+  id        String    @id @default(cuid())
+  fullName  String    @db.VarChar(80)
+  phone     String    @unique @db.VarChar(16)
+  email     String?   @db.VarChar(120)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  orders    Order[]
+  addresses Address[]
+
+  @@index([email])
+}
+
+model Address {
+  id         String   @id @default(cuid())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String
+  location   String   @db.VarChar(160)
+  notes      String?  @db.VarChar(500)
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+}
+
+// ------------------------------ Orders -------------------------------------
+
+model Order {
+  id               String             @id @default(cuid())
+  orderNumber      String             @unique @db.VarChar(24)
+  customer         Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId       String?
+  /// Snapshot of customer info at order time (never changes if customer edits later)
+  fullName         String             @db.VarChar(80)
+  phone            String             @db.VarChar(16)
+  email            String?            @db.VarChar(120)
+  deliveryLocation String             @db.VarChar(160)
+  notes            String?            @db.VarChar(500)
+  subtotal         Decimal            @db.Decimal(10, 2)
+  deliveryFee      Decimal            @default(0) @db.Decimal(10, 2)
+  total            Decimal            @db.Decimal(10, 2)
+  paymentMethod    PaymentMethod      @default(pay_on_delivery)
+  paymentStatus    PaymentStatus      @default(unpaid)
+  status           OrderStatus        @default(pending)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  items            OrderItem[]
+  statusHistory    OrderStatusEvent[]
+  payments         Payment[]
+
+  @@index([status, createdAt])
+  @@index([phone])
+  @@index([customerId, createdAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  /// Restrict: products with order history cannot be hard-deleted (admin deactivates instead)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productId   String
+  productName String   @db.VarChar(120)
+  productSlug String   @db.VarChar(140)
+  imageUrl    String?
+  size        String?  @db.VarChar(20)
+  color       String?  @db.VarChar(40)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  quantity    Int
+  lineTotal   Decimal  @db.Decimal(10, 2)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model OrderStatusEvent {
+  id             String       @id @default(cuid())
+  order          Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        String
+  previousStatus OrderStatus?
+  newStatus      OrderStatus
+  /// Admin email when changed by an admin; null for system actions
+  changedBy      String?      @db.VarChar(120)
+  note           String?      @db.VarChar(300)
+  createdAt      DateTime     @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// ------------------------------ Payments -----------------------------------
+
+model Payment {
+  id           String                   @id @default(cuid())
+  order        Order                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId      String
+  provider     PaymentProvider
+  status       PaymentTransactionStatus @default(pending)
+  amount       Decimal                  @db.Decimal(10, 2)
+  phone        String?                  @db.VarChar(16)
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  transactions PaymentTransaction[]
+
+  @@index([orderId])
+  @@index([status, updatedAt])
+}
+
+model PaymentTransaction {
+  id                String                    @id @default(cuid())
+  payment           Payment                   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  paymentId         String
+  checkoutRequestId String                    @unique @db.VarChar(64)
+  merchantRequestId String?                   @db.VarChar(64)
+  resultCode        Int?
+  resultDesc        String?                   @db.VarChar(255)
+  receipt           String?                   @db.VarChar(40)
+  processedAt       DateTime?
+  raw               Json?
+  createdAt         DateTime                  @default(now())
+
+  @@index([paymentId])
+}
+
+// ------------------------------ Email --------------------------------------
+
+/// Audit trail for every transactional email attempt (sent/failed/skipped).
+/// Emails are fire-and-forget; this table is the only durable record.
+model EmailLog {
+  id        String   @id @default(cuid())
+  toEmail   String   @db.VarChar(160)
+  subject   String   @db.VarChar(200)
+  template  String   @db.VarChar(40)
+  status    String   @default("skipped") @db.VarChar(20)
+  error     String?  @db.VarChar(300)
+  orderId   String?  @db.VarChar(40)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([orderId])
+}
+
+// ------------------------------ Store settings -----------------------------
+
+/// Single row (id = "main") holding the editable business profile.
+model StoreSettings {
+  id                String   @id @default("main")
+  name              String   @db.VarChar(80)
+  shortName         String   @db.VarChar(40)
+  tagline           String   @db.VarChar(80)
+  description       String   @db.VarChar(600)
+  email             String   @default("") @db.VarChar(120)
+  phone             String   @default("") @db.VarChar(24)
+  /// WhatsApp number in international digits, e.g. "254712345678"
+  whatsappNumber    String   @default("") @db.VarChar(24)
+  /// Optional brand logo (public URL from the uploads storage provider)
+  logoUrl           String?
+  location          String   @default("") @db.VarChar(200)
+  socialLinks       Json
+  currency          String   @db.VarChar(8)
+  currencySymbol    String   @db.VarChar(8)
+  currencyLocale    String   @db.VarChar(16)
+  delivery          Json
+  /// Owner-configured payment options (manual M-Pesa Till/Paybill + pay on
+  /// delivery). Nullable — absent means the defaults in mappers.ts apply.
+  /// Never exposed on the PUBLIC /api/store response (admin-only data).
+  payments          Json?
+  lowStockThreshold Int      @default(3)
+  updatedAt         DateTime @updatedAt
+}
+
+// ------------------------------ Engagement ---------------------------------
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique @db.VarChar(120)
+  createdAt DateTime @default(now())
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(80)
+  email     String   @db.VarChar(120)
+  phone     String?  @db.VarChar(24)
+  message   String   @db.VarChar(2000)
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead, createdAt])
+}

@@ -1,0 +1,20 @@
+# Environment — NEVER commit real secrets
+.env
+.env.local
+.env.production
+
+# Embedded PostgreSQL data directory (local dev database)
+.pgdata/
+
+# Local dev upload fallback (ephemeral, replaced by Cloudinary in production)
+uploads/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Dependencies
+node_modules/
