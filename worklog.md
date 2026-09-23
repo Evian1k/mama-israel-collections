@@ -417,3 +417,35 @@ Work Log:
 
 Stage Summary:
 - DEPLOYMENT + HANDOVER COMPLETE. The real production architecture (Next.js → Fastify → PostgreSQL) is deployed, browser-verified E2E including the manual M-Pesa owner flow, and survives restarts with all data (products/orders/customers/stock/settings/images). Database handed over clean with only intentional owner config. Honest remaining owner/deployer inputs: real Till/Paybill, real delivery zones, RESEND_API_KEY (optional Cloudinary, real hosting env vars incl. NEXT_PUBLIC_SITE_URL + MPESA_MODE=live, HTTPS domain). See final report to user.
+
+---
+Task ID: push-to-github
+Agent: lead (orchestrator)
+Task: Push the project to git@github.com:Evian1k/mama-israel-collections.git without leaking secrets.
+
+Work Log:
+- PRE-PUSH SECURITY AUDIT found the local history (8 commits) contaminated: root .env (real admin credentials) in history; the admin password string embedded in old worklog.md + 6 tool-results blobs; the ENTIRE live .pgdata PostgreSQL directory tracked (1,371 files); .env.example templates ignored by the .env* rule and missing.
+- SCRUB: redacted 3 password occurrences from worklog.md; untracked .pgdata/, tool-results/, agent-ctx/, db/custom.db, .zscripts/dev.pid; gitignore += .pgdata/, backend/uploads/, tool-results/, agent-ctx/, db/custom.db, zscripts/dev.pid, !**/.env.example negations; recreated root + backend/.env.example (variable names + comments only, zero real values; var names verified against src/proxy.ts BACKEND_API_URL and docs/ENVIRONMENT.md).
+- HISTORY REPLACED with a single verified clean commit (856b32d): fresh orphan branch → commit → main. Verified across ALL reachable refs: password grep zero matches; no .env/pgdata/junk tracked; payload = 490 objects, largest blob 328KB (bun.lock).
+- PUSH ATTEMPT FAILED — AUTH: sandbox has no ssh binary (user gave SSH URL), no gh CLI, no GITHUB_TOKEN, no credential helper/netrc. Remote configured as https://github.com/Evian1k/mama-israel-collections.git; push requires the user's Personal Access Token.
+
+Stage Summary:
+- Repo is 100% prepared and verified secret-free; only the user's GitHub token is missing to complete: git push -u origin main --force.
+
+---
+Task ID: git-push
+Agent: lead (orchestrator)
+Task: Push clean repository history to github.com/Evian1k/mama-israel-collections using user-provided PAT (one-time URL, no persistence).
+
+Work Log:
+- Inspected repo state: branch main at f904e12 (auto-checkpoint: worklog.md + .zscripts/dev.pid only) on top of clean commit 33be59f (348 files, production platform).
+- Re-verified clean commit 33be59f: 348 files; sensitive-path scan only surfaced benign items (.env.example templates, .zscripts build scripts, use-secret-tap-navigate.ts feature hook); secret-pattern scan only matched a placeholder doc string in PRODUCTION_CHECKLIST.md. No real credentials.
+- Pushed explicitly by hash (33be59f:refs/heads/main) so the auto-checkpoint commit stayed out of the public history. Used one-time URL with the PAT; output piped through sed to redact ghp_* tokens; GIT_TERMINAL_PROMPT=0 and credential.helper= disabled to prevent any persistence.
+- Result: `* [new branch] 33be59f -> main`, exit 0.
+- Verified via git ls-remote: remote refs/heads/main == 33be59fd8f1b630f61c9e7644c5a04bdab1df25f (exact match).
+- Verified no token persistence: git config -l clean, no .git-credentials, remote URL token-free.
+
+Stage Summary:
+- GitHub repo Evian1k/mama-israel-collections now has a single clean commit (33be59f) on main — 348 files, zero secrets, token never persisted in config/remote/credentials.
+- Local main remains one checkpoint ahead (f904e12: worklog/dev.pid only) — future pushes should push by explicit hash or reset main to remote to keep history clean.
+- PAT was supplied in-chat by user; treat as exposed-by-channel, recommend rotation after use.

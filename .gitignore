@@ -63,3 +63,4 @@ db/custom.db
 !**/.env.example
 
 zscripts/dev.pid
+.zscripts/dev.pid
